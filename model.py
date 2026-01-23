@@ -17,10 +17,6 @@ savePath = f"{pathlib.Path(__file__).parent.resolve()}/linearTinyWeights.pt"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.cudnn.benchmark = True
 
-
-
-
-
 class shardDataset(Dataset):
     def __init__(self, shard, multidim=False):
         data = torch.load(shardPath+shard)
@@ -128,5 +124,6 @@ def train_model(model, path):
                 torch.save(model.state_dict(), path)
 
 model = linearTiny().to(device)
-model.load_state_dict(torch.load(savePath))
+if pathlib.Path(savePath).exists():
+    model.load_state_dict(torch.load(savePath))
 train_model(model, savePath)
