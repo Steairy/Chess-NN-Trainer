@@ -76,5 +76,3 @@ while True:
         db.flush()
         currentFile += 1
         db = DB(f"{savePath}file{currentFile}")
-
-    print(f"Analyzed: {analyzed.value}")
