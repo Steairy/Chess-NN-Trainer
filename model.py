@@ -7,87 +7,42 @@ import time
 from math import sqrt
 import random
 import numpy as np
+from utils import fen_to_tensor
 
 learning_rate = 1e-4
 batch_size = 4096
 
 shardPath = f"{pathlib.Path(__file__).parent.resolve()}/Shards/"
-savePath = f"{pathlib.Path(__file__).parent.resolve()}/linearTinyWeights.pt"
+savePath = f"{pathlib.Path(__file__).parent.resolve()}/NN.pt"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.cudnn.benchmark = True
 
 class shardDataset(Dataset):
-    def __init__(self, shard, multidim=False):
+    def __init__(self, shard):
         data = torch.load(shardPath+shard)
         self.positions = data["position"]
         self.labels = data["evaluation"]
-        if multidim:
-            self.positions = torch.permute(self.positions, (0, 3, 1, 2))
     
     def __len__(self):
         return len(self.labels)
     
     def __getitem__(self, idx):
-        return self.positions[idx].float(), self.labels[idx].float()/1000 # normalize
+        return self.positions[idx].float(), self.labels[idx].float()
 
-class linearTiny(nn.Module):
+class NN(nn.Module):
     def __init__(self):
         super().__init__()
         self.linear_stack = nn.Sequential(
-            nn.Linear(773, 1024),
+            nn.Linear(772, 256),
             nn.ReLU(),
-            nn.Linear(1024, 1024),
+            nn.Linear(256, 32),
             nn.ReLU(),
-            nn.Linear(1024, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 1),
+            nn.Linear(32, 1),
         )
     
     def forward(self,x):
         return self.linear_stack(x)
-
-def fen_to_tensor(fen:str):
-        pieceTable = {
-            "p": 0,
-            "n": 1,
-            "b": 2,
-            "r": 3,
-            "q": 4,
-            "k": 5,
-            "P": 6,
-            "N": 7,
-            "B": 8,
-            "R": 9,
-            "Q": 10,
-            "K": 11
-        }
-        tokens = fen.split(" ")
-        board = torch.zeros(size=(773,), dtype=torch.uint8)
-        current = 0
-        for letter in tokens[0]:
-            if letter.isdigit():
-                current += int(letter)
-            
-            elif letter == "/":
-                continue
-            
-            else:
-                board[current*12 + pieceTable[letter]] = 1
-                current += 1
-        
-        board[768] = 1 if tokens[1] == "w" else 0
-        for letter in tokens[2]:
-            if letter == "K":
-                board[769] = 1
-            if letter == "Q":
-                board[770] = 1
-            if letter == "k":
-                board[771] = 1
-            if letter == "q":
-                board[772] = 1
-        return board.float().to(device)
-
 
 def train_shard(shard, model, loss_fn, optim):
     dataloader = DataLoader(shardDataset(shard), batch_size=batch_size, num_workers=4, shuffle=True)
@@ -97,15 +52,17 @@ def train_shard(shard, model, loss_fn, optim):
         X = X.to(device)
         y = y.to(device)
         pred = model(X).squeeze(-1)
-        loss = loss_fn(pred, y)
+
+        predWDL = torch.sigmoid(pred/400)
+        targetWDL = torch.sigmoid(y/400)
+        loss = loss_fn(predWDL, targetWDL)
 
         optim.zero_grad()
         loss.backward()
         optim.step()
         
         avg += loss.item()
-    print(f"Loss: {sqrt(avg/len(dataloader))*1000}") # turn back normalization and mse
-
+    print(f"Loss: {sqrt(avg/len(dataloader))}")
 
 def train_model(model, path):
     loss_fn = nn.MSELoss()
@@ -123,7 +80,36 @@ def train_model(model, path):
             if shards_completed % 50 == 0:
                 torch.save(model.state_dict(), path)
 
-model = linearTiny().to(device)
+model = NN().to(device)
 if pathlib.Path(savePath).exists():
     model.load_state_dict(torch.load(savePath))
-train_model(model, savePath)
+
+def print_stats():
+    for i, layer in enumerate(model.linear_stack):
+        if(i % 2 == 1):
+            continue
+
+        with torch.no_grad():
+            w_max = layer.weight.abs().max().item()
+            b_max = layer.bias.abs().max().item()
+            print(f"Weight Abs Max = {w_max:.4f}, Bias Abs Max = {b_max:.4f}")
+
+def export(model):
+    w1 = model.linear_stack[0].weight.T.detach().cpu().numpy()
+    b1 = model.linear_stack[0].bias.detach().cpu().numpy()
+    w2 = model.linear_stack[2].weight.T.detach().cpu().numpy()
+    b2 = model.linear_stack[2].bias.detach().cpu().numpy()
+    w3 = model.linear_stack[4].weight.flatten().detach().cpu().numpy()
+    b3 = model.linear_stack[4].bias.detach().cpu().numpy()
+
+    w1.tofile("W1.bin")
+    b1.tofile("B1.bin")
+    w2.tofile("W2.bin")
+    b2.tofile("B2.bin")
+    w3.tofile("W3.bin")
+    b3.tofile("B3.bin")
+
+
+#train_model(model, savePath)
+#print(model(fen_to_tensor("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").to(device).float()))
+export(model)

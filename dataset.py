@@ -7,7 +7,7 @@ from multiprocessing import Queue
 import pathlib
 import os
 
-depth = 6
+depth = 8
 
 posLimit = 100000
 currentFile = 0
@@ -15,7 +15,6 @@ worker_limit = 16
 
 analyzed = Value("i", 0)
 analyzed_lock = Lock()
-seenglobal = {}
 
 fishPath = f"{pathlib.Path(__file__).parent.resolve()}/stockfish/stockfish"
 rawPath = f"{pathlib.Path(__file__).parent.resolve()}/raw/"
@@ -27,20 +26,18 @@ game_queue = Queue(maxsize=1000)
 write_queue = Queue(maxsize=1000)
 
 def worker():
-    seen = {}
     stockfish = Stockfish(fishPath, depth=depth)
+    stockfish.set_turn_perspective(True)
     while True:
         game = game_queue.get()
         board = chess.Board()
         for move in game.mainline_moves():
                 board.push(move)
                 fen = board.fen()
-                if fen not in seen:
-                    stockfish.set_fen_position(fen)
-                    evaluation = stockfish.get_evaluation()
-                    if evaluation["type"] == "cp":
-                        write_queue.put((fen, evaluation["value"]))
-                    seen[fen] = True
+                stockfish.set_fen_position(fen)
+                evaluation = stockfish.get_evaluation()
+                if evaluation["type"] == "cp":
+                    write_queue.put((fen, evaluation["value"]))
 
         with analyzed_lock:
             global analyzed
@@ -68,9 +65,7 @@ for i in range(worker_limit):
 while True:
 
     fen, value = write_queue.get()
-    if fen not in seenglobal:
-        db.write(fen, value)
-        seenglobal[fen] = True
+    db.write(fen, value)
     
     if len(db.db) > posLimit:
         db.flush()
